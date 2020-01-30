@@ -31,13 +31,24 @@ wait_for_database() {
         sleep 5
         COUNT=$((COUNT+5))
         ;;
-      "DB_EMPTY"|"DB_MISSING")
+      "DB_MISSING")
         if [ $should_setup -eq 1 ]; then
-          # create db, apply schema and seed
-          echo "Initializing database"
-          portusctl exec --vendor rake db:setup
+          # create db
+          echo "Creating database"
+          portusctl exec --vendor rake db:create
           if [ $? -ne 0 ]; then
-            echo "Error at setup time"
+            echo "Error creating database"
+            exit 1
+          fi
+        fi
+        ;;
+      "DB_EMPTY")
+        if [ $should_setup -eq 1 ]; then
+          # apply schema and seed
+          echo "Initializing database"
+          portusctl exec --vendor rake db:schema:load db:seed
+          if [ $? -ne 0 ]; then
+            echo "Error initializing database"
             exit 1
           fi
         fi
@@ -60,20 +71,25 @@ setup_database() {
 file_env() {
     local var="$1"
     local fileVar="${var}_FILE"
-    if [ -v "${var}" ] && [ -v "${fileVar}" ]; then
+    local def="${2:-}"
+    if [ "${!var:-}" ] && [ "${!fileVar:-}" ]; then
         echo >&2 "error: both $var and $fileVar are set (but are exclusive)"
         exit 1
     fi
-    if [ -v "${fileVar}" ]; then
+    local val="$def"
+    if [ "${!var:-}" ]; then
+        val="${!var}"
+    elif [ "${!fileVar:-}" ]; then
         val="$(< "${!fileVar}")"
-        export "$var"="$val"
     fi
+    export "$var"="$val"
     unset "$fileVar"
 }
 
 # Setup environment variables from secrets.
 secrets=( PORTUS_DB_PASSWORD PORTUS_PASSWORD PORTUS_SECRET_KEY_BASE
-          PORTUS_EMAIL_SMTP_PASSWORD PORTUS_LDAP_AUTHENTICATION_PASSWORD )
+          PORTUS_EMAIL_SMTP_PASSWORD PORTUS_LDAP_AUTHENTICATION_PASSWORD
+          PORTUS_OAUTH_OPENID_CONNECT_SECRET )
 for s in "${secrets[@]}"; do
     if [[ -z "${!s}" ]]; then
         file_env "$s"
